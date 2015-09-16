@@ -23,8 +23,10 @@ ActiveRecord::Base.class_eval do
       "(#{_resolve_record(record, options).values.map { |r| sanitize(r) }.join(', ')})"
     end.join(",")
 
+    insert_table = options[:insert_table] ? "`#{options[:insert_table]}`" : quoted_table_name
+
     sql = <<-SQL
-      INSERT INTO #{quoted_table_name}
+      INSERT INTO #{insert_table}
         (#{attributes})
       VALUES
         #{values_sql}
