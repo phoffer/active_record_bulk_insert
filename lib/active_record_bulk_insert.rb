@@ -2,17 +2,15 @@ ActiveRecord::Base.class_eval do
   def self.bulk_insert_in_batches(attrs, options = {})
     batch_size = options.fetch(:batch_size, 1000)
     delay      = options.fetch(:delay, nil)
-    max_packet = options.fetch(:max_packet, connection.execute("SHOW VARIABLES like 'max_allowed_packet';").to_h['max_allowed_packet'].to_i)
 
     attrs.each_slice(batch_size).map do |sliced_attrs|
-      bulk_insert(sliced_attrs, options.merge(max_packet: max_packet))
+      bulk_insert(sliced_attrs, options)
       sleep(delay) if delay
     end.flatten.compact
   end
 
   def self.bulk_insert(attrs, options = {})
     return [] if attrs.empty?
-    max_packet = options.fetch(:max_packet, connection.execute("SHOW VARIABLES like 'max_allowed_packet';").to_h['max_allowed_packet'].to_i)
 
     use_provided_primary_key = options.fetch(:use_provided_primary_key, false)
     attributes = _resolve_record(attrs.first, options).keys.join(", ")
@@ -31,15 +29,20 @@ ActiveRecord::Base.class_eval do
       VALUES
         values_sql
     SQL
-    base_query_size = sql.bytesize
-    if base_query_size + values_sql.bytesize > max_packet
-      available = max_packet - base_query_size
-      parts = (values_sql.bytesize / max_packet) + 1
-      delay = options.fetch(:delay, nil)
-      attrs.each_slice((attrs.length.to_f / parts).ceil) do |batch|
-        batch_sql = _generate_values_sql(batch, options)
-        connection.execute(sql.gsub('values_sql', batch_sql)) unless batch.empty?
-        sleep(delay) if delay
+    if ActiveRecord::Base.connection.adapter_name == "Mysql2"
+      max_packet = options.fetch(:max_packet, connection.execute("SHOW VARIABLES like 'max_allowed_packet';").to_h['max_allowed_packet'].to_i)
+      base_query_size = sql.bytesize
+      if base_query_size + values_sql.bytesize > max_packet
+        available = max_packet - base_query_size
+        parts = (values_sql.bytesize / max_packet) + 1
+        delay = options.fetch(:delay, nil)
+        attrs.each_slice((attrs.length.to_f / parts).ceil) do |batch|
+          batch_sql = _generate_values_sql(batch, options)
+          connection.execute(sql.gsub('values_sql', batch_sql)) unless batch.empty?
+          sleep(delay) if delay
+        end
+      else
+        connection.execute(sql.gsub('values_sql', values_sql)) unless attrs.empty?
       end
     else
       connection.execute(sql.gsub('values_sql', values_sql)) unless attrs.empty?
